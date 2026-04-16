@@ -758,17 +758,15 @@ function buildAdditionalModelRequestFields(
 					output_config: { effort: mapThinkingLevelToEffort(options.reasoning, model.id) },
 				}
 			: (() => {
-					const defaultBudgets: Record<ThinkingLevel, number> = {
+					const defaultBudgets: Record<"minimal" | "low" | "medium" | "high", number> = {
 						minimal: 1024,
 						low: 2048,
 						medium: 8192,
 						high: 16384,
-						xhigh: 16384, // Claude doesn't support xhigh, clamp to high
 					};
 
-					// Custom budgets override defaults (xhigh not in ThinkingBudgets, use high)
-					const level = options.reasoning === "xhigh" ? "high" : options.reasoning;
-					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
+					const level = clampReasoning(options.reasoning) ?? "high";
+					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[level];
 
 					return {
 						thinking: {

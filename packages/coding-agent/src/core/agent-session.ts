@@ -24,7 +24,13 @@ import type {
 	ThinkingLevel,
 } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@mariozechner/pi-ai";
-import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsXhigh } from "@mariozechner/pi-ai";
+import {
+	clampThinkingLevel,
+	getThinkingLevels,
+	isContextOverflow,
+	modelsAreEqual,
+	resetApiProviders,
+} from "@mariozechner/pi-ai";
 import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
@@ -222,12 +228,6 @@ interface ToolDefinitionEntry {
 // ============================================================================
 // Constants
 // ============================================================================
-
-/** Standard thinking levels */
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
-
-/** Thinking levels including xhigh (for supported models) */
-const THINKING_LEVELS_WITH_XHIGH: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
 // ============================================================================
 // AgentSession Class
@@ -1398,6 +1398,9 @@ export class AgentSession {
 		if (!this._modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
+		if (!model.reasoning) {
+			throw new Error(`Model ${model.provider}/${model.id} does not support reasoning`);
+		}
 
 		const previousModel = this.model;
 		const thinkingLevel = this._getThinkingLevelForModelSwitch();
@@ -1435,6 +1438,9 @@ export class AgentSession {
 		const len = scopedModels.length;
 		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		const next = scopedModels[nextIndex];
+		if (!next.model.reasoning) {
+			throw new Error(`Model ${next.model.provider}/${next.model.id} does not support reasoning`);
+		}
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.thinkingLevel);
 
 		// Apply model
@@ -1498,9 +1504,7 @@ export class AgentSession {
 
 		if (isChanging) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
-			if (this.supportsThinking() || effectiveLevel !== "off") {
-				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
-			}
+			this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 		}
 	}
 
@@ -1508,9 +1512,7 @@ export class AgentSession {
 	 * Cycle to next thinking level.
 	 * @returns New level, or undefined if model doesn't support thinking
 	 */
-	cycleThinkingLevel(): ThinkingLevel | undefined {
-		if (!this.supportsThinking()) return undefined;
-
+	cycleThinkingLevel(): ThinkingLevel {
 		const levels = this.getAvailableThinkingLevels();
 		const currentIndex = levels.indexOf(this.thinkingLevel);
 		const nextIndex = (currentIndex + 1) % levels.length;
@@ -1522,18 +1524,22 @@ export class AgentSession {
 
 	/**
 	 * Get available thinking levels for current model.
-	 * The provider will clamp to what the specific model supports internally.
+	 * Throws if no model is selected or the model does not expose reasoning.
 	 */
 	getAvailableThinkingLevels(): ThinkingLevel[] {
-		if (!this.supportsThinking()) return ["off"];
-		return this.supportsXhighThinking() ? THINKING_LEVELS_WITH_XHIGH : THINKING_LEVELS;
-	}
+		const model = this.model;
+		if (!model) {
+			throw new Error("No model selected");
+		}
+		if (!model.reasoning) {
+			throw new Error(`Model ${model.provider}/${model.id} does not support reasoning`);
+		}
 
-	/**
-	 * Check if current model supports xhigh thinking level.
-	 */
-	supportsXhighThinking(): boolean {
-		return this.model ? supportsXhigh(this.model) : false;
+		const levels = getThinkingLevels(model) as ThinkingLevel[];
+		if (levels.length === 0) {
+			throw new Error(`Model ${model.provider}/${model.id} does not expose thinking levels`);
+		}
+		return levels;
 	}
 
 	/**
@@ -1547,28 +1553,13 @@ export class AgentSession {
 		if (explicitLevel !== undefined) {
 			return explicitLevel;
 		}
-		if (!this.supportsThinking()) {
-			return this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
-		}
-		return this.thinkingLevel;
+		return (this.thinkingLevel ??
+			this.settingsManager.getDefaultThinkingLevel() ??
+			DEFAULT_THINKING_LEVEL) as ThinkingLevel;
 	}
 
 	private _clampThinkingLevel(level: ThinkingLevel, availableLevels: ThinkingLevel[]): ThinkingLevel {
-		const ordered = THINKING_LEVELS_WITH_XHIGH;
-		const available = new Set(availableLevels);
-		const requestedIndex = ordered.indexOf(level);
-		if (requestedIndex === -1) {
-			return availableLevels[0] ?? "off";
-		}
-		for (let i = requestedIndex; i < ordered.length; i++) {
-			const candidate = ordered[i];
-			if (available.has(candidate)) return candidate;
-		}
-		for (let i = requestedIndex - 1; i >= 0; i--) {
-			const candidate = ordered[i];
-			if (available.has(candidate)) return candidate;
-		}
-		return availableLevels[0] ?? "off";
+		return (clampThinkingLevel(level, availableLevels) ?? availableLevels[0]) as ThinkingLevel;
 	}
 
 	// =========================================================================
@@ -2323,9 +2314,7 @@ export class AgentSession {
 					]),
 				)
 			: this._baseToolDefinitionsFactory
-				? Object.fromEntries(
-						this._baseToolDefinitionsFactory().map((definition) => [definition.name, definition]),
-					)
+				? Object.fromEntries(this._baseToolDefinitionsFactory().map((definition) => [definition.name, definition]))
 				: createAllToolDefinitions(this._cwd, {
 						read: { autoResizeImages },
 						bash: { commandPrefix: shellCommandPrefix },

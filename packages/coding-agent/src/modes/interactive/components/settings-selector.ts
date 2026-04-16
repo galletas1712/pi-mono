@@ -19,15 +19,6 @@ const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	maxPrimaryColumnWidth: 32,
 };
 
-const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
-	off: "No reasoning",
-	minimal: "Very brief reasoning (~1k tokens)",
-	low: "Light reasoning (~2k tokens)",
-	medium: "Moderate reasoning (~8k tokens)",
-	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Maximum reasoning (~32k tokens)",
-};
-
 export interface SettingsConfig {
 	autoCompact: boolean;
 	showImages: boolean;
@@ -241,7 +232,6 @@ export class SettingsSelectorComponent extends Container {
 						config.availableThinkingLevels.map((level) => ({
 							value: level,
 							label: level,
-							description: THINKING_DESCRIPTIONS[level],
 						})),
 						currentValue,
 						(value) => {

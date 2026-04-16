@@ -46,32 +46,22 @@ function createSession({
 }
 
 describe("AgentSession model switching", () => {
-	it("preserves the saved thinking preference through non-reasoning models", async () => {
+	it("throws when switching to a non-reasoning model", async () => {
 		const { session, sessionManager, settingsManager } = createSession({
 			scopedModels: [{ model: reasoningModel }, { model: nonReasoningModel }],
 		});
 
 		try {
-			await session.setModel(nonReasoningModel);
-			expect(session.thinkingLevel).toBe("off");
-			expect(settingsManager.getDefaultThinkingLevel()).toBe("high");
-
-			await session.setModel(reasoningModel);
-			expect(session.thinkingLevel).toBe("high");
-
-			await session.cycleModel();
-			expect(session.thinkingLevel).toBe("off");
-			expect(settingsManager.getDefaultThinkingLevel()).toBe("high");
-
-			await session.cycleModel();
-			expect(session.thinkingLevel).toBe("high");
+			await expect(session.setModel(nonReasoningModel)).rejects.toThrow(
+				`Model ${nonReasoningModel.provider}/${nonReasoningModel.id} does not support reasoning`,
+			);
 			expect(settingsManager.getDefaultThinkingLevel()).toBe("high");
 			expect(
 				sessionManager
 					.getEntries()
 					.filter((entry) => entry.type === "thinking_level_change")
 					.map((entry) => entry.thinkingLevel),
-			).toEqual(["off", "high", "off", "high"]);
+			).toEqual([]);
 		} finally {
 			session.dispose();
 		}

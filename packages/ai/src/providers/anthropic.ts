@@ -6,7 +6,7 @@ import type {
 	MessageParam,
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { getEnvApiKey } from "../env-api-keys.js";
-import { calculateCost } from "../models.js";
+import { calculateCost, getThinkingLevels } from "../models.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -64,6 +64,14 @@ function getCacheControl(
 
 // Stealth mode: Mimic Claude Code's tool naming exactly
 const claudeCodeVersion = "2.1.75";
+const claudeCodeUserAgent = `claude-cli/${claudeCodeVersion} (external, cli)`;
+const claudeCodePrefix = "You are Claude Code, Anthropic's official CLI for Claude.";
+const attributionFingerprintSalt = "59cf53e54c78";
+const claudeCodeSessionHeader = "X-Claude-Code-Session-Id";
+const clientRequestIdHeader = "x-client-request-id";
+
+let fallbackSessionId: string | undefined;
+let fallbackDeviceId: string | undefined;
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -100,6 +108,126 @@ const fromClaudeCodeName = (name: string, tools?: Tool[]) => {
 	}
 	return name;
 };
+
+type ClaudeCodeHints = {
+	identityHeaders: boolean;
+	directAnthropicHints: boolean;
+	sessionId: string;
+	attributionHeader?: string;
+	betaFeatures: string[];
+};
+
+function getRandomId(): string {
+	if (typeof globalThis.crypto?.randomUUID === "function") {
+		return globalThis.crypto.randomUUID();
+	}
+	return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getSessionId(sessionId?: string): string {
+	if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+		return sessionId;
+	}
+	fallbackSessionId ||= getRandomId();
+	return fallbackSessionId;
+}
+
+function getDeviceId(): string {
+	fallbackDeviceId ||= getRandomId();
+	return fallbackDeviceId;
+}
+
+function isDirectAnthropicBaseUrl(baseUrl: string): boolean {
+	try {
+		return new URL(baseUrl).hostname === "api.anthropic.com";
+	} catch {
+		return baseUrl.includes("api.anthropic.com");
+	}
+}
+
+function extractFirstUserText(messages: Message[]): string {
+	for (const message of messages) {
+		if (message.role !== "user") continue;
+		if (typeof message.content === "string") {
+			return message.content;
+		}
+		for (const block of message.content) {
+			if (block.type === "text") {
+				return block.text;
+			}
+		}
+	}
+	return "";
+}
+
+function digestToHex(bytes: Uint8Array): string {
+	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function fallbackFingerprint(input: string): string {
+	let hash = 0;
+	for (let i = 0; i < input.length; i++) {
+		hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+	}
+	return hash.toString(16).padStart(8, "0").slice(0, 3);
+}
+
+async function computeFingerprint(messages: Message[]): Promise<string> {
+	const text = extractFirstUserText(messages);
+	const chars = [text[4] || "0", text[7] || "0", text[20] || "0"].join("");
+	const input = `${attributionFingerprintSalt}${chars}${claudeCodeVersion}`;
+
+	if (globalThis.crypto?.subtle) {
+		const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+		return digestToHex(new Uint8Array(digest)).slice(0, 3);
+	}
+
+	return fallbackFingerprint(input);
+}
+
+async function buildClaudeCodeHints(
+	model: Model<"anthropic-messages">,
+	context: Context,
+	isOAuth: boolean,
+	interleavedThinking: boolean,
+	sessionId?: string,
+): Promise<ClaudeCodeHints> {
+	const directAnthropicHints =
+		isDirectAnthropicBaseUrl(model.baseUrl) && (isOAuth || !!sessionId || (context.tools?.length ?? 0) > 0);
+	const identityHeaders = isOAuth || directAnthropicHints;
+	const resolvedSessionId = getSessionId(sessionId);
+	const betaFeatures: string[] = ["fine-grained-tool-streaming-2025-05-14"];
+	const normalizedModelId = model.id.toLowerCase();
+
+	if (needsInterleavedThinkingBeta(model, interleavedThinking)) {
+		betaFeatures.push("interleaved-thinking-2025-05-14");
+	}
+	if (identityHeaders) {
+		betaFeatures.unshift("claude-code-20250219");
+	}
+	if (isOAuth) {
+		betaFeatures.splice(1, 0, "oauth-2025-04-20");
+	}
+	if (directAnthropicHints && model.contextWindow >= 1_000_000) {
+		betaFeatures.push("context-1m-2025-08-07");
+	}
+	if (directAnthropicHints && /claude-(opus|sonnet|haiku)-4([.-]|$)/.test(normalizedModelId)) {
+		betaFeatures.push("context-management-2025-06-27");
+	}
+
+	const dedupedBetas = Array.from(new Set(betaFeatures));
+	const attributionHeader = directAnthropicHints
+		? `x-anthropic-billing-header: cc_version=${claudeCodeVersion}.${await computeFingerprint(context.messages)}; cc_entrypoint=cli;`
+		: undefined;
+
+	return {
+		identityHeaders,
+		directAnthropicHints,
+		sessionId: resolvedSessionId,
+		attributionHeader,
+		betaFeatures: dedupedBetas,
+	};
+}
 
 /**
  * Convert content blocks to Anthropic API format
@@ -198,6 +326,10 @@ function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]):
 	return merged;
 }
 
+function needsInterleavedThinkingBeta(model: Model<"anthropic-messages">, interleavedThinking: boolean): boolean {
+	return interleavedThinking && !supportsAdaptiveThinking(model);
+}
+
 export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -227,12 +359,21 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
+			let claudeCodeHints: ClaudeCodeHints | undefined;
 
 			if (options?.client) {
 				client = options.client;
 				isOAuth = false;
 			} else {
 				const apiKey = options?.apiKey ?? getEnvApiKey(model.provider) ?? "";
+				isOAuth = isOAuthToken(apiKey);
+				claudeCodeHints = await buildClaudeCodeHints(
+					model,
+					context,
+					isOAuth,
+					options?.interleavedThinking ?? true,
+					options?.sessionId,
+				);
 
 				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
@@ -243,17 +384,10 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					});
 				}
 
-				const created = createClient(
-					model,
-					apiKey,
-					options?.interleavedThinking ?? true,
-					options?.headers,
-					copilotDynamicHeaders,
-				);
+				const created = createClient(model, apiKey, claudeCodeHints, options?.headers, copilotDynamicHeaders);
 				client = created.client;
-				isOAuth = created.isOAuthToken;
 			}
-			let params = buildParams(model, context, isOAuth, options);
+			let params = buildParams(model, context, isOAuth, options, claudeCodeHints);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
@@ -451,42 +585,52 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 /**
  * Check if a model supports adaptive thinking (Opus 4.6+, Sonnet 4.6)
  */
-function supportsAdaptiveThinking(modelId: string): boolean {
-	// Adaptive-thinking model IDs (with or without date suffix)
+function supportsAdaptiveThinking(model: Model<"anthropic-messages">): boolean {
+	const adaptiveThinkingSupported = model.capabilities?.thinking?.types.adaptive.supported;
+	if (adaptiveThinkingSupported !== undefined) {
+		return adaptiveThinkingSupported;
+	}
 	return (
-		modelId.includes("opus-4-6") ||
-		modelId.includes("opus-4.6") ||
-		modelId.includes("opus-4-7") ||
-		modelId.includes("opus-4.7") ||
-		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
+		model.id.includes("opus-4-6") ||
+		model.id.includes("opus-4.6") ||
+		model.id.includes("opus-4-7") ||
+		model.id.includes("opus-4.7") ||
+		model.id.includes("sonnet-4-6") ||
+		model.id.includes("sonnet-4.6")
 	);
 }
 
-/**
- * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
- * Note: effort "max" is only valid on Opus 4.6, while Opus 4.7 supports "xhigh".
- */
-function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], modelId: string): AnthropicEffort {
+function mapThinkingLevelToEffort(
+	level: SimpleStreamOptions["reasoning"],
+	model: Model<"anthropic-messages">,
+): AnthropicEffort {
+	const availableLevels = new Set(getThinkingLevels(model));
+
 	switch (level) {
+		case "max":
+			if (availableLevels.has("max")) {
+				return "max";
+			}
+			return availableLevels.has("xhigh") ? "xhigh" : "high";
 		case "minimal":
+		case "off":
 			return "low";
 		case "low":
 			return "low";
 		case "medium":
-			return "medium";
+			return availableLevels.has("medium") ? "medium" : "high";
 		case "high":
 			return "high";
 		case "xhigh":
-			if (modelId.includes("opus-4-6") || modelId.includes("opus-4.6")) {
-				return "max";
-			}
-			if (modelId.includes("opus-4-7") || modelId.includes("opus-4.7")) {
+			if (availableLevels.has("xhigh")) {
 				return "xhigh";
 			}
-			return "high";
+			return availableLevels.has("max") ? "max" : "high";
 		default:
-			return "high";
+			if (availableLevels.has("xhigh")) {
+				return "xhigh";
+			}
+			return availableLevels.has("max") ? "max" : "high";
 	}
 }
 
@@ -507,8 +651,8 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 
 	// For Opus 4.6 and Sonnet 4.6: use adaptive thinking with effort level
 	// For older models: use budget-based thinking
-	if (supportsAdaptiveThinking(model.id)) {
-		const effort = mapThinkingLevelToEffort(options.reasoning, model.id);
+	if (supportsAdaptiveThinking(model)) {
+		const effort = mapThinkingLevelToEffort(options.reasoning, model);
 		return streamAnthropic(model, context, {
 			...base,
 			thinkingEnabled: true,
@@ -538,21 +682,15 @@ function isOAuthToken(apiKey: string): boolean {
 function createClient(
 	model: Model<"anthropic-messages">,
 	apiKey: string,
-	interleavedThinking: boolean,
+	claudeCodeHints: ClaudeCodeHints,
 	optionsHeaders?: Record<string, string>,
 	dynamicHeaders?: Record<string, string>,
 ): { client: Anthropic; isOAuthToken: boolean } {
-	// Adaptive thinking models (Opus 4.6, Sonnet 4.6) have interleaved thinking built-in.
-	// The beta header is deprecated on Opus 4.6 and redundant on Sonnet 4.6, so skip it.
-	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model.id);
-
 	// Copilot: Bearer auth, selective betas (no fine-grained-tool-streaming)
 	if (model.provider === "github-copilot") {
-		const betaFeatures: string[] = [];
-		if (needsInterleavedBeta) {
-			betaFeatures.push("interleaved-thinking-2025-05-14");
-		}
-
+		const copilotBetas = claudeCodeHints.betaFeatures.includes("interleaved-thinking-2025-05-14")
+			? ["interleaved-thinking-2025-05-14"]
+			: [];
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
@@ -562,7 +700,7 @@ function createClient(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
-					...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
+					...(copilotBetas.length > 0 ? { "anthropic-beta": copilotBetas.join(",") } : {}),
 				},
 				model.headers,
 				dynamicHeaders,
@@ -571,11 +709,6 @@ function createClient(
 		});
 
 		return { client, isOAuthToken: false };
-	}
-
-	const betaFeatures = ["fine-grained-tool-streaming-2025-05-14"];
-	if (needsInterleavedBeta) {
-		betaFeatures.push("interleaved-thinking-2025-05-14");
 	}
 
 	// OAuth: Bearer auth, Claude Code identity headers
@@ -589,9 +722,19 @@ function createClient(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
-					"anthropic-beta": `claude-code-20250219,oauth-2025-04-20,${betaFeatures.join(",")}`,
-					"user-agent": `claude-cli/${claudeCodeVersion}`,
-					"x-app": "cli",
+					"anthropic-beta": claudeCodeHints.betaFeatures.join(","),
+					...(claudeCodeHints.identityHeaders
+						? {
+								"User-Agent": claudeCodeUserAgent,
+								"x-app": "cli",
+							}
+						: {}),
+					...(claudeCodeHints.directAnthropicHints
+						? {
+								[claudeCodeSessionHeader]: claudeCodeHints.sessionId,
+								[clientRequestIdHeader]: getRandomId(),
+							}
+						: {}),
 				},
 				model.headers,
 				optionsHeaders,
@@ -610,7 +753,19 @@ function createClient(
 			{
 				accept: "application/json",
 				"anthropic-dangerous-direct-browser-access": "true",
-				"anthropic-beta": betaFeatures.join(","),
+				"anthropic-beta": claudeCodeHints.betaFeatures.join(","),
+				...(claudeCodeHints.identityHeaders
+					? {
+							"User-Agent": claudeCodeUserAgent,
+							"x-app": "cli",
+						}
+					: {}),
+				...(claudeCodeHints.directAnthropicHints
+					? {
+							[claudeCodeSessionHeader]: claudeCodeHints.sessionId,
+							[clientRequestIdHeader]: getRandomId(),
+						}
+					: {}),
 			},
 			model.headers,
 			optionsHeaders,
@@ -625,6 +780,7 @@ function buildParams(
 	context: Context,
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
+	claudeCodeHints?: ClaudeCodeHints,
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model.baseUrl, options?.cacheRetention);
 	const params: MessageCreateParamsStreaming = {
@@ -634,15 +790,19 @@ function buildParams(
 		stream: true,
 	};
 
-	// For OAuth tokens, we MUST include Claude Code identity
-	if (isOAuthToken) {
-		params.system = [
-			{
+	if (claudeCodeHints?.identityHeaders || isOAuthToken) {
+		params.system = [];
+		if (claudeCodeHints?.attributionHeader) {
+			params.system.push({
 				type: "text",
-				text: "You are Claude Code, Anthropic's official CLI for Claude.",
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
+				text: claudeCodeHints.attributionHeader,
+			});
+		}
+		params.system.push({
+			type: "text",
+			text: claudeCodePrefix,
+			...(cacheControl ? { cache_control: cacheControl } : {}),
+		});
 		if (context.systemPrompt) {
 			params.system.push({
 				type: "text",
@@ -674,7 +834,7 @@ function buildParams(
 	// budget-based (older models), or explicitly disabled.
 	if (model.reasoning) {
 		if (options?.thinkingEnabled) {
-			if (supportsAdaptiveThinking(model.id)) {
+			if (supportsAdaptiveThinking(model)) {
 				// Adaptive thinking: Claude decides when and how much to think
 				params.thinking = { type: "adaptive" };
 				if (options.effort) {
@@ -697,6 +857,15 @@ function buildParams(
 		if (typeof userId === "string") {
 			params.metadata = { user_id: userId };
 		}
+	}
+	if (!params.metadata && claudeCodeHints?.identityHeaders) {
+		params.metadata = {
+			user_id: JSON.stringify({
+				device_id: getDeviceId(),
+				account_uuid: "",
+				session_id: claudeCodeHints.sessionId,
+			}),
+		};
 	}
 
 	if (options?.toolChoice) {

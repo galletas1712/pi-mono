@@ -11,13 +11,13 @@ import type {
 	AssistantMessage,
 	Context,
 	Model,
+	PresetThinkingLevel,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
 	TextContent,
 	ThinkingBudgets,
 	ThinkingContent,
-	ThinkingLevel,
 	ToolCall,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
@@ -392,7 +392,7 @@ function buildParams(
 	return params;
 }
 
-type ClampedThinkingLevel = Exclude<ThinkingLevel, "xhigh">;
+type ClampedThinkingLevel = PresetThinkingLevel;
 
 function isGemma4Model(model: Model<"google-generative-ai">): boolean {
 	return /gemma-?4/.test(model.id.toLowerCase());

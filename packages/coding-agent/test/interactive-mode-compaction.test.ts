@@ -1,3 +1,4 @@
+import { Container } from "@mariozechner/pi-tui";
 import { describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
 
@@ -5,11 +6,25 @@ describe("InteractiveMode compaction events", () => {
 	test("rebuilds chat and appends a synthetic compaction summary at the bottom", async () => {
 		const fakeThis = {
 			isInitialized: true,
+			session: {
+				agent: {
+					state: {
+						isStreaming: false,
+						streamingMessage: undefined,
+						pendingToolCalls: new Set(),
+						messages: [],
+					},
+				},
+			},
 			footer: { invalidate: vi.fn() },
+			retryLoader: undefined,
 			autoCompactionEscapeHandler: undefined as (() => void) | undefined,
 			autoCompactionLoader: undefined,
+			loadingAnimation: undefined,
+			pendingWorkingMessage: undefined,
+			pendingTools: new Map(),
 			defaultEditor: {},
-			statusContainer: { clear: vi.fn() },
+			statusContainer: new Container(),
 			chatContainer: { clear: vi.fn() },
 			rebuildChatFromMessages: vi.fn(),
 			addMessageToChat: vi.fn(),
@@ -17,6 +32,8 @@ describe("InteractiveMode compaction events", () => {
 			showStatus: vi.fn(),
 			flushCompactionQueue: vi.fn().mockResolvedValue(undefined),
 			ui: { requestRender: vi.fn() },
+			shouldShowWorkingAnimation: Reflect.get(InteractiveMode.prototype, "shouldShowWorkingAnimation"),
+			syncLoadingAnimationWithSession: Reflect.get(InteractiveMode.prototype, "syncLoadingAnimationWithSession"),
 		};
 
 		const handleEvent = Reflect.get(InteractiveMode.prototype, "handleEvent") as (

@@ -7,7 +7,7 @@
 
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual, supportsXhigh } from "@mariozechner/pi-ai";
+import { type ImageContent, modelsAreEqual } from "@mariozechner/pi-ai";
 import { ProcessTerminal, setKeybindings, TUI } from "@mariozechner/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.js";
@@ -292,12 +292,10 @@ function buildSessionOptions(
 	settingsManager: SettingsManager,
 ): {
 	options: CreateAgentSessionOptions;
-	cliThinkingFromModel: boolean;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 } {
 	const options: CreateAgentSessionOptions = {};
 	const diagnostics: AgentSessionRuntimeDiagnostic[] = [];
-	let cliThinkingFromModel = false;
 
 	// Model from CLI
 	// - supports --provider <name> --model <pattern>
@@ -320,7 +318,6 @@ function buildSessionOptions(
 			// Explicit --thinking still takes precedence (applied later).
 			if (!parsed.thinking && resolved.thinkingLevel) {
 				options.thinkingLevel = resolved.thinkingLevel;
-				cliThinkingFromModel = true;
 			}
 		}
 	}
@@ -378,7 +375,7 @@ function buildSessionOptions(
 		options.tools = parsed.tools.map((name) => allTools[name]);
 	}
 
-	return { options, cliThinkingFromModel, diagnostics };
+	return { options, diagnostics };
 }
 
 function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
@@ -557,11 +554,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
 		const scopedModels =
 			modelPatterns && modelPatterns.length > 0 ? await resolveModelScope(modelPatterns, modelRegistry) : [];
-		const {
-			options: sessionOptions,
-			cliThinkingFromModel,
-			diagnostics: sessionOptionDiagnostics,
-		} = buildSessionOptions(
+		const { options: sessionOptions, diagnostics: sessionOptionDiagnostics } = buildSessionOptions(
 			parsed,
 			scopedModels,
 			sessionManager.buildSessionContext().messages.length > 0,
@@ -591,18 +584,6 @@ export async function main(args: string[], options?: MainOptions) {
 			tools: sessionOptions.tools,
 			customTools: sessionOptions.customTools,
 		});
-		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
-		if (created.session.model && cliThinkingOverride) {
-			let effectiveThinking = created.session.thinkingLevel;
-			if (!created.session.model.reasoning) {
-				effectiveThinking = "off";
-			} else if (effectiveThinking === "xhigh" && !supportsXhigh(created.session.model)) {
-				effectiveThinking = "high";
-			}
-			if (effectiveThinking !== created.session.thinkingLevel) {
-				created.session.setThinkingLevel(effectiveThinking);
-			}
-		}
 
 		return {
 			...created,

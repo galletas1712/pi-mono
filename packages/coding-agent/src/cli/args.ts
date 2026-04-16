@@ -50,10 +50,9 @@ export interface Args {
 	diagnostics: Array<{ type: "warning" | "error"; message: string }>;
 }
 
-const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
-
-export function isValidThinkingLevel(level: string): level is ThinkingLevel {
-	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
+function normalizeThinkingLevel(level: string): ThinkingLevel | undefined {
+	const trimmed = level.trim();
+	return trimmed.length > 0 ? (trimmed as ThinkingLevel) : undefined;
 }
 
 export function parseArgs(args: string[]): Args {
@@ -118,13 +117,13 @@ export function parseArgs(args: string[]): Args {
 			}
 			result.tools = validTools;
 		} else if (arg === "--thinking" && i + 1 < args.length) {
-			const level = args[++i];
-			if (isValidThinkingLevel(level)) {
+			const level = normalizeThinkingLevel(args[++i]);
+			if (level) {
 				result.thinking = level;
 			} else {
 				result.diagnostics.push({
 					type: "warning",
-					message: `Invalid thinking level "${level}". Valid values: ${VALID_THINKING_LEVELS.join(", ")}`,
+					message: "Invalid thinking level. Expected a non-empty string.",
 				});
 			}
 		} else if (arg === "--print" || arg === "-p") {
@@ -234,7 +233,7 @@ ${chalk.bold("Options:")}
   --no-tools                     Disable all built-in tools
   --tools <tools>                Comma-separated list of tools to enable (default: read,bash,edit,write)
                                  Available: read, bash, edit, write, grep, find, ls
-  --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
+  --thinking <level>             Set thinking level: minimal, low, medium, high, xhigh, max
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)

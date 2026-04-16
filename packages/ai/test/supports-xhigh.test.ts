@@ -1,34 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { getModel, supportsXhigh } from "../src/models.js";
+import { getModel, getThinkingLevels } from "../src/models.js";
 
-describe("supportsXhigh", () => {
-	it("returns true for Anthropic Opus 4.6 on anthropic-messages API", () => {
+describe("getThinkingLevels", () => {
+	it("falls back to xhigh for Anthropic models before capability hydration", () => {
 		const model = getModel("anthropic", "claude-opus-4-6");
 		expect(model).toBeDefined();
-		expect(supportsXhigh(model!)).toBe(true);
+		expect(getThinkingLevels(model!)).toContain("xhigh");
 	});
 
-	it("returns true for Anthropic Opus 4.7 on anthropic-messages API", () => {
+	it("surfaces xhigh for Anthropic Opus 4.7 on anthropic-messages API", () => {
 		const model = getModel("anthropic", "claude-opus-4-7");
 		expect(model).toBeDefined();
-		expect(supportsXhigh(model!)).toBe(true);
+		expect(getThinkingLevels(model!)).toContain("xhigh");
 	});
 
-	it("returns false for non-Opus Anthropic models", () => {
+	it("uses the same Anthropic fallback for non-Opus models before capability hydration", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeDefined();
-		expect(supportsXhigh(model!)).toBe(false);
+		expect(getThinkingLevels(model!)).toContain("xhigh");
 	});
 
-	it("returns true for GPT-5.4 models", () => {
+	it("surfaces xhigh for GPT-5.4 models", () => {
 		const model = getModel("openai-codex", "gpt-5.4");
 		expect(model).toBeDefined();
-		expect(supportsXhigh(model!)).toBe(true);
+		expect(getThinkingLevels(model!)).toContain("xhigh");
 	});
 
-	it("returns true for OpenRouter Opus 4.6 (openai-completions API)", () => {
+	it("does not expose Anthropic max through OpenRouter Opus 4.6", () => {
 		const model = getModel("openrouter", "anthropic/claude-opus-4.6");
 		expect(model).toBeDefined();
-		expect(supportsXhigh(model!)).toBe(true);
+		expect(getThinkingLevels(model!)).not.toContain("max");
 	});
 });

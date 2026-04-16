@@ -1,4 +1,12 @@
-import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.js";
+import type {
+	Api,
+	Model,
+	PresetThinkingLevel,
+	SimpleStreamOptions,
+	StreamOptions,
+	ThinkingBudgets,
+	ThinkingLevel,
+} from "../types.js";
 
 export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
 	return {
@@ -15,8 +23,43 @@ export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOption
 	};
 }
 
-export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh"> | undefined {
-	return effort === "xhigh" ? "high" : effort;
+export function clampReasoning(effort: ThinkingLevel | undefined): PresetThinkingLevel | undefined {
+	switch (effort) {
+		case undefined:
+		case "off":
+			return undefined;
+		case "minimal":
+		case "low":
+		case "medium":
+		case "high":
+			return effort;
+		case "xhigh":
+		case "max":
+			return "high";
+		default:
+			return "high";
+	}
+}
+
+export function normalizeOpenAIReasoning(
+	_model: Model<Api>,
+	effort: ThinkingLevel | undefined,
+): "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
+	switch (effort) {
+		case undefined:
+		case "off":
+			return undefined;
+		case "minimal":
+		case "low":
+		case "medium":
+		case "high":
+			return effort;
+		case "xhigh":
+		case "max":
+			return "xhigh";
+		default:
+			return "high";
+	}
 }
 
 export function adjustMaxTokensForThinking(
@@ -34,7 +77,10 @@ export function adjustMaxTokensForThinking(
 	const budgets = { ...defaultBudgets, ...customBudgets };
 
 	const minOutputTokens = 1024;
-	const level = clampReasoning(reasoningLevel)!;
+	const level = clampReasoning(reasoningLevel);
+	if (!level) {
+		return { maxTokens: Math.min(baseMaxTokens, modelMaxTokens), thinkingBudget: 0 };
+	}
 	let thinkingBudget = budgets[level]!;
 	const maxTokens = Math.min(baseMaxTokens + thinkingBudget, modelMaxTokens);
 

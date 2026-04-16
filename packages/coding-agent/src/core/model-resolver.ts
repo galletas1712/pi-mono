@@ -3,17 +3,16 @@
  */
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { type Api, type KnownProvider, type Model, modelsAreEqual } from "@mariozechner/pi-ai";
+import { type Api, getThinkingLevels, type KnownProvider, type Model, modelsAreEqual } from "@mariozechner/pi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
-import { isValidThinkingLevel } from "../cli/args.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import type { ModelRegistry } from "./model-registry.js";
 
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
-	anthropic: "claude-opus-4-6",
+	anthropic: "claude-opus-4-7",
 	openai: "gpt-5.4",
 	"azure-openai-responses": "gpt-5.2",
 	"openai-codex": "gpt-5.4",
@@ -148,6 +147,12 @@ export interface ParsedModelResult {
 	warning: string | undefined;
 }
 
+const COMMON_THINKING_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
+function supportsThinkingLevel(model: Model<Api>, level: string): boolean {
+	return getThinkingLevels(model).includes(level);
+}
+
 function buildFallbackModel(provider: string, modelId: string, availableModels: Model<Api>[]): Model<Api> | undefined {
 	const providerModels = availableModels.filter((m) => m.provider === provider);
 	if (providerModels.length === 0) return undefined;
@@ -170,10 +175,10 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
  *
  * Algorithm:
  * 1. Try to match full pattern as a model
- * 2. If found, return it with "off" thinking level
+ * 2. If found, return it with the default thinking level
  * 3. If not found and has colons, split on last colon:
  *    - If suffix is valid thinking level, use it and recurse on prefix
- *    - If suffix is invalid, warn and recurse on prefix with "off"
+ *    - If suffix is invalid, warn and recurse on prefix with the default thinking level
  *
  * @internal Exported for testing
  */
@@ -197,39 +202,30 @@ export function parseModelPattern(
 
 	const prefix = pattern.substring(0, lastColonIndex);
 	const suffix = pattern.substring(lastColonIndex + 1);
-
-	if (isValidThinkingLevel(suffix)) {
-		// Valid thinking level - recurse on prefix and use this level
-		const result = parseModelPattern(prefix, availableModels, options);
-		if (result.model) {
-			// Only use this thinking level if no warning from inner recursion
-			return {
-				model: result.model,
-				thinkingLevel: result.warning ? undefined : suffix,
-				warning: result.warning,
-			};
-		}
-		return result;
-	} else {
-		// Invalid suffix
-		const allowFallback = options?.allowInvalidThinkingLevelFallback ?? true;
-		if (!allowFallback) {
-			// In strict mode (CLI --model parsing), treat it as part of the model id and fail.
-			// This avoids accidentally resolving to a different model.
-			return { model: undefined, thinkingLevel: undefined, warning: undefined };
-		}
-
-		// Scope mode: recurse on prefix and warn
-		const result = parseModelPattern(prefix, availableModels, options);
-		if (result.model) {
-			return {
-				model: result.model,
-				thinkingLevel: undefined,
-				warning: `Invalid thinking level "${suffix}" in pattern "${pattern}". Using default instead.`,
-			};
-		}
+	const trimmedSuffix = suffix.trim();
+	const result = parseModelPattern(prefix, availableModels, options);
+	if (!result.model) {
 		return result;
 	}
+
+	if (trimmedSuffix.length > 0 && supportsThinkingLevel(result.model, trimmedSuffix)) {
+		return {
+			model: result.model,
+			thinkingLevel: result.warning ? undefined : (trimmedSuffix as ThinkingLevel),
+			warning: result.warning,
+		};
+	}
+
+	const allowFallback = options?.allowInvalidThinkingLevelFallback ?? true;
+	if (!allowFallback && !COMMON_THINKING_LEVELS.has(trimmedSuffix)) {
+		return { model: undefined, thinkingLevel: undefined, warning: undefined };
+	}
+
+	return {
+		model: result.model,
+		thinkingLevel: undefined,
+		warning: `Invalid thinking level "${suffix}" in pattern "${pattern}". Using default instead.`,
+	};
 }
 
 /**
@@ -250,15 +246,29 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 	for (const pattern of patterns) {
 		// Check if pattern contains glob characters
 		if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[")) {
+			const fullPatternMatches = availableModels.filter((m) => {
+				const fullId = `${m.provider}/${m.id}`;
+				return minimatch(fullId, pattern, { nocase: true }) || minimatch(m.id, pattern, { nocase: true });
+			});
+
+			if (fullPatternMatches.length > 0) {
+				for (const model of fullPatternMatches) {
+					if (!scopedModels.find((sm) => modelsAreEqual(sm.model, model))) {
+						scopedModels.push({ model });
+					}
+				}
+				continue;
+			}
+
 			// Extract optional thinking level suffix (e.g., "provider/*:high")
 			const colonIdx = pattern.lastIndexOf(":");
 			let globPattern = pattern;
 			let thinkingLevel: ThinkingLevel | undefined;
 
 			if (colonIdx !== -1) {
-				const suffix = pattern.substring(colonIdx + 1);
-				if (isValidThinkingLevel(suffix)) {
-					thinkingLevel = suffix;
+				const suffix = pattern.substring(colonIdx + 1).trim();
+				if (suffix.length > 0) {
+					thinkingLevel = suffix as ThinkingLevel;
 					globPattern = pattern.substring(0, colonIdx);
 				}
 			}
@@ -362,6 +372,18 @@ export function resolveCliModel(options: {
 		};
 	}
 
+	// Before interpreting "<provider>/<model>" shorthands, prefer an exact full-id match.
+	// This preserves OpenRouter-style IDs such as "openai/gpt-4o:extended".
+	if (!provider) {
+		const lower = cliModel.toLowerCase();
+		const exact = availableModels.find(
+			(m) => m.id.toLowerCase() === lower || `${m.provider}/${m.id}`.toLowerCase() === lower,
+		);
+		if (exact) {
+			return { model: exact, warning: undefined, thinkingLevel: undefined, error: undefined };
+		}
+	}
+
 	// If no explicit --provider, try to interpret "provider/model" format first.
 	// When the prefix before the first slash matches a known provider, prefer that
 	// interpretation over matching models whose IDs literally contain slashes
@@ -380,18 +402,6 @@ export function resolveCliModel(options: {
 				pattern = cliModel.substring(slashIndex + 1);
 				inferredProvider = true;
 			}
-		}
-	}
-
-	// If no provider was inferred from the slash, try exact matches without provider inference.
-	// This handles models whose IDs naturally contain slashes (e.g. OpenRouter-style IDs).
-	if (!provider) {
-		const lower = cliModel.toLowerCase();
-		const exact = availableModels.find(
-			(m) => m.id.toLowerCase() === lower || `${m.provider}/${m.id}`.toLowerCase() === lower,
-		);
-		if (exact) {
-			return { model: exact, warning: undefined, thinkingLevel: undefined, error: undefined };
 		}
 	}
 
@@ -507,7 +517,11 @@ export async function findInitialModel(options: {
 			process.exit(1);
 		}
 		if (resolved.model) {
-			return { model: resolved.model, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
+			return {
+				model: resolved.model,
+				thinkingLevel: resolved.thinkingLevel ?? DEFAULT_THINKING_LEVEL,
+				fallbackMessage: undefined,
+			};
 		}
 	}
 

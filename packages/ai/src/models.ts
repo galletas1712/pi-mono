@@ -1,5 +1,12 @@
 import { MODELS } from "./models.generated.js";
-import type { Api, KnownProvider, Model, Usage } from "./types.js";
+import {
+	type Api,
+	type KnownProvider,
+	type Model,
+	PRESET_THINKING_LEVELS,
+	type ThinkingLevel,
+	type Usage,
+} from "./types.js";
 
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
 
@@ -45,30 +52,83 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 	return usage.cost;
 }
 
-/**
- * Check if a model supports xhigh thinking level.
- *
- * Supported today:
- * - GPT-5.2 / GPT-5.3 / GPT-5.4 model families
- * - Opus 4.6+ models (xhigh maps to adaptive effort "max" on Anthropic-compatible providers)
- */
-export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
-	if (model.id.includes("gpt-5.2") || model.id.includes("gpt-5.3") || model.id.includes("gpt-5.4")) {
-		return true;
+const ANTHROPIC_ADAPTIVE_LEVEL_ORDER = ["low", "medium", "high", "xhigh", "max"] as const;
+const THINKING_LEVEL_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const OPENAI_REASONING_LEVELS = [...PRESET_THINKING_LEVELS, "xhigh"] as const;
+
+function getAnthropicAdaptiveThinkingLevels(model: Model<"anthropic-messages">): ThinkingLevel[] {
+	const adaptiveThinkingSupported = model.capabilities?.thinking?.types.adaptive.supported;
+	const effort = model.capabilities?.effort;
+
+	if (adaptiveThinkingSupported && effort?.supported) {
+		return ANTHROPIC_ADAPTIVE_LEVEL_ORDER.filter((level) => {
+			const capability = effort[level];
+			return capability?.supported === true;
+		});
 	}
 
-	if (
-		model.id.includes("opus-4-6") ||
-		model.id.includes("opus-4.6") ||
-		model.id.includes("opus-4-7") ||
-		model.id.includes("opus-4.7")
-	) {
-		return true;
+	if (adaptiveThinkingSupported === false) {
+		return [];
 	}
-
-	return false;
+	return ["low", "medium", "high", "xhigh"];
 }
 
+function isOpenAIReasoningModel<TApi extends Api>(model: Model<TApi>): boolean {
+	return (
+		model.reasoning &&
+		(model.provider === "openai" || model.provider === "openai-codex" || model.provider === "azure-openai-responses")
+	);
+}
+
+export function getThinkingLevels<TApi extends Api>(model: Model<TApi>): ThinkingLevel[] {
+	if (!model.reasoning) {
+		return [];
+	}
+
+	if (model.api === "anthropic-messages") {
+		const adaptiveLevels = getAnthropicAdaptiveThinkingLevels(model as Model<"anthropic-messages">);
+		if (adaptiveLevels.length > 0) {
+			return adaptiveLevels;
+		}
+		return [...PRESET_THINKING_LEVELS];
+	}
+
+	if (isOpenAIReasoningModel(model)) {
+		return [...OPENAI_REASONING_LEVELS];
+	}
+
+	return [...PRESET_THINKING_LEVELS];
+}
+
+export function clampThinkingLevel(
+	level: ThinkingLevel | undefined,
+	availableLevels: ThinkingLevel[],
+): ThinkingLevel | undefined {
+	if (level === undefined || availableLevels.includes(level)) {
+		return level;
+	}
+
+	const requestedIndex = THINKING_LEVEL_ORDER.indexOf(level as (typeof THINKING_LEVEL_ORDER)[number]);
+	if (requestedIndex === -1) {
+		return availableLevels[0];
+	}
+
+	for (let i = requestedIndex; i < THINKING_LEVEL_ORDER.length; i++) {
+		const candidate = THINKING_LEVEL_ORDER[i];
+		if (availableLevels.includes(candidate)) {
+			return candidate;
+		}
+	}
+
+	for (let i = requestedIndex - 1; i >= 0; i--) {
+		const candidate = THINKING_LEVEL_ORDER[i];
+		if (availableLevels.includes(candidate)) {
+			return candidate;
+		}
+	}
+
+	return availableLevels[0];
+}
 /**
  * Check if two models are equal by comparing both their id and provider.
  * Returns false if either model is null or undefined.

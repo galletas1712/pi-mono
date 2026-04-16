@@ -42,7 +42,10 @@ export type KnownProvider =
 	| "kimi-coding";
 export type Provider = KnownProvider | string;
 
-export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = string;
+
+export const PRESET_THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
+export type PresetThinkingLevel = (typeof PRESET_THINKING_LEVELS)[number];
 
 /** Token budgets for each thinking level (token-based providers only) */
 export interface ThinkingBudgets {
@@ -288,6 +291,50 @@ export interface OpenAIResponsesCompat {
 	// Reserved for future use
 }
 
+export interface CapabilitySupport {
+	supported: boolean;
+}
+
+export interface ContextManagementCapability {
+	supported: boolean;
+	clear_thinking_20251015?: CapabilitySupport | null;
+	clear_tool_uses_20250919?: CapabilitySupport | null;
+	compact_20260112?: CapabilitySupport | null;
+	[key: string]: unknown;
+}
+
+export interface EffortCapability {
+	supported: boolean;
+	low: CapabilitySupport;
+	medium: CapabilitySupport;
+	high: CapabilitySupport;
+	max: CapabilitySupport;
+	xhigh?: CapabilitySupport | null;
+}
+
+export interface ThinkingTypes {
+	adaptive: CapabilitySupport;
+	enabled: CapabilitySupport;
+}
+
+export interface ThinkingCapability {
+	supported: boolean;
+	types: ThinkingTypes;
+}
+
+export interface ModelCapabilities {
+	batch?: CapabilitySupport;
+	citations?: CapabilitySupport;
+	code_execution?: CapabilitySupport;
+	context_management?: ContextManagementCapability;
+	effort?: EffortCapability;
+	image_input?: CapabilitySupport;
+	pdf_input?: CapabilitySupport;
+	structured_outputs?: CapabilitySupport;
+	thinking?: ThinkingCapability;
+	[key: string]: unknown;
+}
+
 /**
  * OpenRouter provider routing preferences.
  * Controls which upstream providers OpenRouter routes requests to.
@@ -392,6 +439,8 @@ export interface Model<TApi extends Api> {
 	};
 	contextWindow: number;
 	maxTokens: number;
+	/** Provider-reported capability metadata, when available. */
+	capabilities?: ModelCapabilities | null;
 	headers?: Record<string, string>;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"

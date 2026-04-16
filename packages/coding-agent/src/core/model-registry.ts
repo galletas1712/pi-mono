@@ -6,8 +6,10 @@ import {
 	type Api,
 	type AssistantMessageEventStream,
 	type Context,
+	canHydrateAnthropicCapabilities,
 	getModels,
 	getProviders,
+	hydrateAnthropicModelsCapabilities,
 	type KnownProvider,
 	type Model,
 	type OAuthProviderInterface,
@@ -292,6 +294,7 @@ export class ModelRegistry {
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
+	private anthropicCapabilitiesHydration?: Promise<void>;
 
 	private constructor(
 		readonly authStorage: AuthStorage,
@@ -315,6 +318,7 @@ export class ModelRegistry {
 		this.providerRequestConfigs.clear();
 		this.modelRequestHeaders.clear();
 		this.loadError = undefined;
+		this.anthropicCapabilitiesHydration = undefined;
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
 		resetApiProviders();
@@ -332,6 +336,61 @@ export class ModelRegistry {
 	 */
 	getError(): string | undefined {
 		return this.loadError;
+	}
+
+	async hydrateAnthropicCapabilities(): Promise<void> {
+		if (!this.anthropicCapabilitiesHydration) {
+			this.anthropicCapabilitiesHydration = this.doHydrateAnthropicCapabilities();
+		}
+		await this.anthropicCapabilitiesHydration;
+	}
+
+	private async doHydrateAnthropicCapabilities(): Promise<void> {
+		const modelsByGroup = new Map<
+			string,
+			{
+				models: Model<Api>[];
+				apiKey: string;
+				headers?: Record<string, string>;
+			}
+		>();
+
+		for (const model of this.models) {
+			if (!canHydrateAnthropicCapabilities(model)) {
+				continue;
+			}
+
+			const groupKey = `${model.provider}|${model.baseUrl}`;
+			let group = modelsByGroup.get(groupKey);
+			if (!group) {
+				const auth = await this.getApiKeyAndHeaders(model);
+				if (!auth.ok || !auth.apiKey) {
+					continue;
+				}
+
+				group = {
+					models: [],
+					apiKey: auth.apiKey,
+					headers: auth.headers,
+				};
+				modelsByGroup.set(groupKey, group);
+			}
+
+			group.models.push(model);
+		}
+
+		await Promise.all(
+			Array.from(modelsByGroup.values(), async (group) => {
+				try {
+					await hydrateAnthropicModelsCapabilities(group.models, {
+						apiKey: group.apiKey,
+						headers: group.headers,
+					});
+				} catch {
+					// Keep static model metadata when capability discovery is unavailable.
+				}
+			}),
+		);
 	}
 
 	private loadModels(): void {
@@ -573,11 +632,11 @@ export class ModelRegistry {
 	}
 
 	/**
-	 * Get only models that have auth configured.
+	 * Get only reasoning models that have auth configured.
 	 * This is a fast check that doesn't refresh OAuth tokens.
 	 */
 	getAvailable(): Model<Api>[] {
-		return this.models.filter((m) => this.hasConfiguredAuth(m));
+		return this.models.filter((m) => m.reasoning && this.hasConfiguredAuth(m));
 	}
 
 	/**

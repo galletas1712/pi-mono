@@ -2328,6 +2328,59 @@ export class InteractiveMode {
 		});
 	}
 
+	private shouldShowWorkingAnimation(): boolean {
+		const state = this.session.agent.state;
+		if (state.streamingMessage) {
+			return true;
+		}
+
+		if (state.pendingToolCalls.size > 0 || this.pendingTools.size > 0) {
+			return true;
+		}
+
+		if (!state.isStreaming) {
+			return false;
+		}
+
+		const lastMessage = state.messages[state.messages.length - 1];
+		return lastMessage?.role !== "assistant";
+	}
+
+	private syncLoadingAnimationWithSession(): void {
+		if (this.retryLoader || this.autoCompactionLoader) {
+			return;
+		}
+
+		if (!this.shouldShowWorkingAnimation()) {
+			if (this.loadingAnimation) {
+				this.loadingAnimation.stop();
+				this.loadingAnimation = undefined;
+			}
+			this.statusContainer.clear();
+			return;
+		}
+
+		if (!this.loadingAnimation) {
+			this.loadingAnimation = new Loader(
+				this.ui,
+				(spinner) => theme.fg("accent", spinner),
+				(text) => theme.fg("muted", text),
+				this.defaultWorkingMessage,
+			);
+			if (this.pendingWorkingMessage !== undefined) {
+				if (this.pendingWorkingMessage) {
+					this.loadingAnimation.setMessage(this.pendingWorkingMessage);
+				}
+				this.pendingWorkingMessage = undefined;
+			}
+		}
+
+		if (!this.statusContainer.children.includes(this.loadingAnimation)) {
+			this.statusContainer.clear();
+			this.statusContainer.addChild(this.loadingAnimation);
+		}
+	}
+
 	private async handleEvent(event: AgentSessionEvent): Promise<void> {
 		if (!this.isInitialized) {
 			await this.init();
@@ -2651,6 +2704,8 @@ export class InteractiveMode {
 				break;
 			}
 		}
+
+		this.syncLoadingAnimationWithSession();
 	}
 
 	/** Extract text content from a user message */
@@ -3038,20 +3093,19 @@ export class InteractiveMode {
 		if (this.isBashMode) {
 			this.editor.borderColor = theme.getBashModeBorderColor();
 		} else {
-			const level = this.session.thinkingLevel || "off";
-			this.editor.borderColor = theme.getThinkingBorderColor(level);
+			this.editor.borderColor = theme.getThinkingBorderColor(this.session.thinkingLevel);
 		}
 		this.ui.requestRender();
 	}
 
 	private cycleThinkingLevel(): void {
-		const newLevel = this.session.cycleThinkingLevel();
-		if (newLevel === undefined) {
-			this.showStatus("Current model does not support thinking");
-		} else {
+		try {
+			const newLevel = this.session.cycleThinkingLevel();
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
 			this.showStatus(`Thinking level: ${newLevel}`);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 
@@ -3064,9 +3118,7 @@ export class InteractiveMode {
 			} else {
 				this.footer.invalidate();
 				this.updateEditorBorderColor();
-				const thinkingStr =
-					result.model.reasoning && result.thinkingLevel !== "off" ? ` (thinking: ${result.thinkingLevel})` : "";
-				this.showStatus(`Switched to ${result.model.name || result.model.id}${thinkingStr}`);
+				this.showStatus(`Switched to ${result.model.name || result.model.id} (thinking: ${result.thinkingLevel})`);
 				void this.maybeWarnAboutAnthropicSubscriptionAuth(result.model);
 			}
 		} catch (error) {

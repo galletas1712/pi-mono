@@ -97,20 +97,25 @@ describe("parseModelPattern", () => {
 			expect(result.warning).toBeUndefined();
 		});
 
-		test("gpt-4o:medium returns gpt-4o with medium thinking level", () => {
+		test("gpt-4o:medium warns because the model does not support reasoning", () => {
 			const result = parseModelPattern("gpt-4o:medium", allModels);
 			expect(result.model?.id).toBe("gpt-4o");
-			expect(result.thinkingLevel).toBe("medium");
-			expect(result.warning).toBeUndefined();
+			expect(result.thinkingLevel).toBeUndefined();
+			expect(result.warning).toContain("Invalid thinking level");
 		});
 
-		test("all valid thinking levels work", () => {
-			for (const level of ["off", "minimal", "low", "medium", "high", "xhigh"]) {
+		test("sonnet accepts only the levels it actually exposes", () => {
+			for (const level of ["low", "medium", "high", "xhigh"]) {
 				const result = parseModelPattern(`sonnet:${level}`, allModels);
 				expect(result.model?.id).toBe("claude-sonnet-4-5");
 				expect(result.thinkingLevel).toBe(level);
 				expect(result.warning).toBeUndefined();
 			}
+
+			const minimal = parseModelPattern("sonnet:minimal", allModels);
+			expect(minimal.model?.id).toBe("claude-sonnet-4-5");
+			expect(minimal.thinkingLevel).toBeUndefined();
+			expect(minimal.warning).toContain("Invalid thinking level");
 		});
 	});
 

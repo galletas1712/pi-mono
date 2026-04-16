@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { type Message, type Model, streamSimple } from "@mariozechner/pi-ai";
+import { clampThinkingLevel, getThinkingLevels, type Message, type Model, streamSimple } from "@mariozechner/pi-ai";
 import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
@@ -179,6 +179,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
 	const authStorage = options.authStorage ?? AuthStorage.create(authPath);
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
+	await modelRegistry.hydrateAnthropicCapabilities();
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
@@ -215,7 +216,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			isContinuing: hasExistingSession,
 			defaultProvider: settingsManager.getDefaultProvider(),
 			defaultModelId: settingsManager.getDefaultModel(),
-			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel(),
+			defaultThinkingLevel: settingsManager.getDefaultThinkingLevel() as ThinkingLevel | undefined,
 			modelRegistry,
 		});
 		model = result.model;
@@ -226,23 +227,30 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 	}
 
-	let thinkingLevel = options.thinkingLevel;
+	let thinkingLevel: ThinkingLevel | undefined = options.thinkingLevel;
 
 	// If session has data, restore thinking level from it
 	if (thinkingLevel === undefined && hasExistingSession) {
 		thinkingLevel = hasThinkingEntry
 			? (existingSession.thinkingLevel as ThinkingLevel)
-			: (settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL);
+			: ((settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL) as ThinkingLevel);
 	}
 
 	// Fall back to settings default
 	if (thinkingLevel === undefined) {
-		thinkingLevel = settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
+		thinkingLevel = (settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL) as ThinkingLevel;
 	}
 
-	// Clamp to model capabilities
-	if (!model || !model.reasoning) {
-		thinkingLevel = "off";
+	if (model) {
+		if (!model.reasoning) {
+			throw new Error(`Model ${model.provider}/${model.id} does not support reasoning`);
+		}
+		const availableThinkingLevels = getThinkingLevels(model) as ThinkingLevel[];
+		if (availableThinkingLevels.length === 0) {
+			throw new Error(`Model ${model.provider}/${model.id} does not expose thinking levels`);
+		}
+		thinkingLevel = (clampThinkingLevel(thinkingLevel, availableThinkingLevels) ??
+			availableThinkingLevels[0]) as ThinkingLevel;
 	}
 
 	const initialActiveToolNames = options.toolNames ?? options.tools?.map((tool) => tool.name);

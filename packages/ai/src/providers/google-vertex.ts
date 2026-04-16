@@ -11,7 +11,7 @@ import type {
 	AssistantMessage,
 	Context,
 	Model,
-	ThinkingLevel as PiThinkingLevel,
+	PresetThinkingLevel,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -458,7 +458,7 @@ function buildParams(
 	return params;
 }
 
-type ClampedThinkingLevel = Exclude<PiThinkingLevel, "xhigh">;
+type ClampedThinkingLevel = PresetThinkingLevel;
 
 function isGemini3ProModel(model: Model<"google-generative-ai">): boolean {
 	return /gemini-3(?:\.\d+)?-pro/.test(model.id.toLowerCase());

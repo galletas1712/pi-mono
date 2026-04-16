@@ -8,15 +8,6 @@ const THINKING_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	maxPrimaryColumnWidth: 32,
 };
 
-const LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
-	off: "No reasoning",
-	minimal: "Very brief reasoning (~1k tokens)",
-	low: "Light reasoning (~2k tokens)",
-	medium: "Moderate reasoning (~8k tokens)",
-	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Maximum reasoning (~32k tokens)",
-};
-
 /**
  * Component that renders a thinking level selector with borders
  */
@@ -34,7 +25,6 @@ export class ThinkingSelectorComponent extends Container {
 		const thinkingLevels: SelectItem[] = availableLevels.map((level) => ({
 			value: level,
 			label: level,
-			description: LEVEL_DESCRIPTIONS[level],
 		}));
 
 		// Add top border

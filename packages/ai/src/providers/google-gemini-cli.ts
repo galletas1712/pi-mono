@@ -11,13 +11,13 @@ import type {
 	AssistantMessage,
 	Context,
 	Model,
+	PresetThinkingLevel,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
 	TextContent,
 	ThinkingBudgets,
 	ThinkingContent,
-	ThinkingLevel,
 	ToolCall,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
@@ -946,7 +946,7 @@ export function buildRequest(
 	};
 }
 
-type ClampedThinkingLevel = Exclude<ThinkingLevel, "xhigh">;
+type ClampedThinkingLevel = PresetThinkingLevel;
 
 function getDisabledThinkingConfig(modelId: string): ThinkingConfig {
 	// Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
