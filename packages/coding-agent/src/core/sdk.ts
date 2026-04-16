@@ -34,7 +34,6 @@ import {
 	readOnlyTools,
 	readTool,
 	type Tool,
-	type ToolName,
 	withFileMutationQueue,
 	writeTool,
 } from "./tools/index.js";
@@ -57,8 +56,12 @@ export interface CreateAgentSessionOptions {
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
-	/** Built-in tools to use. Default: codingTools [read, bash, edit, write] */
+	/** Tool handles whose names should start active in the session. */
 	tools?: Tool[];
+	/** Explicit active tool names. Prefer this when providing custom base tool definitions. */
+	toolNames?: string[];
+	/** Per-session base tool definitions. Use this to replace the default built-in base tool bundle. */
+	baseToolDefinitionsFactory?: () => ToolDefinition[];
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
 
@@ -242,10 +245,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = "off";
 	}
 
-	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
-	const initialActiveToolNames: ToolName[] = options.tools
-		? options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools)
-		: defaultActiveToolNames;
+	const initialActiveToolNames = options.toolNames ?? options.tools?.map((tool) => tool.name);
 
 	let agent: Agent;
 
@@ -351,6 +351,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		customTools: options.customTools,
 		modelRegistry,
 		initialActiveToolNames,
+		baseToolDefinitionsFactory: options.baseToolDefinitionsFactory,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 	});

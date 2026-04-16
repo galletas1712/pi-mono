@@ -179,4 +179,46 @@ describe("AgentSession dynamic tool registration", () => {
 
 		session.dispose();
 	});
+
+	it("accepts explicit tool names for custom base tool definitions", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+			toolNames: ["echo"],
+			baseToolDefinitionsFactory: () => [
+				{
+					name: "echo",
+					label: "Echo",
+					description: "Echoes the provided text",
+					promptSnippet: "Use echo to reflect a short string back to the user.",
+					parameters: Type.Object({
+						text: Type.String(),
+					}),
+					execute: async (_toolCallId, params) => ({
+						content: [{ type: "text", text: String(params.text) }],
+						details: {},
+					}),
+				},
+			],
+		});
+
+		expect(session.getAllTools().map((tool) => tool.name)).toContain("echo");
+		expect(session.getActiveToolNames()).toEqual(["echo"]);
+		expect(session.systemPrompt).toContain("- echo: Use echo to reflect a short string back to the user.");
+
+		session.dispose();
+	});
 });

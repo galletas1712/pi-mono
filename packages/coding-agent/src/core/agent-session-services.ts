@@ -54,6 +54,8 @@ export interface CreateAgentSessionFromServicesOptions {
 	thinkingLevel?: ThinkingLevel;
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	tools?: Tool[];
+	toolNames?: string[];
+	baseToolDefinitionsFactory?: () => ToolDefinition[];
 	customTools?: ToolDefinition[];
 }
 
@@ -191,6 +193,8 @@ export async function createAgentSessionFromServices(
 		thinkingLevel: options.thinkingLevel,
 		scopedModels: options.scopedModels,
 		tools: options.tools,
+		toolNames: options.toolNames,
+		baseToolDefinitionsFactory: options.baseToolDefinitionsFactory,
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
 	});

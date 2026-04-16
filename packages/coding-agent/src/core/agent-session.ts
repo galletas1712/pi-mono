@@ -148,8 +148,10 @@ export interface AgentSessionConfig {
 	customTools?: ToolDefinition[];
 	/** Model registry for API key resolution and model discovery */
 	modelRegistry: ModelRegistry;
-	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
+	/** Initial active tool names. Default depends on the selected base tool bundle. */
 	initialActiveToolNames?: string[];
+	/** Per-session base tool definitions that replace the default built-in base tool bundle. */
+	baseToolDefinitionsFactory?: () => ToolDefinition[];
 	/**
 	 * Override base tools (useful for custom runtimes).
 	 *
@@ -278,6 +280,7 @@ export class AgentSession {
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
+	private _baseToolDefinitionsFactory?: () => ToolDefinition[];
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
@@ -309,6 +312,7 @@ export class AgentSession {
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
+		this._baseToolDefinitionsFactory = config.baseToolDefinitionsFactory;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 
@@ -2318,10 +2322,14 @@ export class AgentSession {
 						createToolDefinitionFromAgentTool(tool),
 					]),
 				)
-			: createAllToolDefinitions(this._cwd, {
-					read: { autoResizeImages },
-					bash: { commandPrefix: shellCommandPrefix },
-				});
+			: this._baseToolDefinitionsFactory
+				? Object.fromEntries(
+						this._baseToolDefinitionsFactory().map((definition) => [definition.name, definition]),
+					)
+				: createAllToolDefinitions(this._cwd, {
+						read: { autoResizeImages },
+						bash: { commandPrefix: shellCommandPrefix },
+					});
 
 		this._baseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
@@ -2354,9 +2362,10 @@ export class AgentSession {
 			this._applyExtensionBindings(this._extensionRunner);
 		}
 
-		const defaultActiveToolNames = this._baseToolsOverride
-			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write"];
+		const defaultActiveToolNames =
+			this._baseToolsOverride || this._baseToolDefinitionsFactory
+				? Array.from(this._baseToolDefinitions.keys())
+				: ["read", "bash", "edit", "write"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
