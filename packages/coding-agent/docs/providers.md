@@ -13,9 +13,10 @@ Pi supports subscription-based providers via OAuth and API key providers via env
 
 ## Subscriptions
 
-Use `/login` in interactive mode, then select a provider:
+Use `/login` in interactive mode, then select a provider. For Anthropic, `/login` now lets you choose between Claude subscription auth and Anthropic Console billing:
 
 - Claude Pro/Max
+- Anthropic Console (API usage billing)
 - ChatGPT Plus/Pro (Codex)
 - GitHub Copilot
 - Google Gemini CLI

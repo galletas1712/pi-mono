@@ -7,6 +7,7 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 			anthropicSubscriptionWarningShown: false,
 			session: {
 				modelRegistry: {
+					isUsingSubscriptionAuth: vi.fn().mockReturnValue(false),
 					authStorage: {
 						get: vi.fn().mockReturnValue(undefined),
 					},
@@ -27,14 +28,12 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		expect(fakeThis.session.modelRegistry.getApiKeyForProvider).toHaveBeenCalledTimes(1);
 	});
 
-	test("warns when Anthropic OAuth is stored even if token refresh lookup would fail", async () => {
+	test("warns when Anthropic subscription OAuth is stored", async () => {
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
 			session: {
 				modelRegistry: {
-					authStorage: {
-						get: vi.fn().mockReturnValue({ type: "oauth" }),
-					},
+					isUsingSubscriptionAuth: vi.fn().mockReturnValue(true),
 					getApiKeyForProvider: vi.fn().mockResolvedValue(undefined),
 				},
 			},
@@ -49,11 +48,32 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		expect(fakeThis.session.modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
 	});
 
+	test("does not warn when Anthropic Console OAuth is stored", async () => {
+		const fakeThis: any = {
+			anthropicSubscriptionWarningShown: false,
+			session: {
+				modelRegistry: {
+					isUsingSubscriptionAuth: vi.fn().mockReturnValue(false),
+					getApiKeyForProvider: vi.fn().mockResolvedValue("sk-ant-managed"),
+				},
+			},
+			showWarning: vi.fn(),
+		};
+
+		await (InteractiveMode as any).prototype.maybeWarnAboutAnthropicSubscriptionAuth.call(fakeThis, {
+			provider: "anthropic",
+		});
+
+		expect(fakeThis.showWarning).not.toHaveBeenCalled();
+		expect(fakeThis.session.modelRegistry.getApiKeyForProvider).toHaveBeenCalledTimes(1);
+	});
+
 	test("does not warn for non-Anthropic models", async () => {
 		const fakeThis: any = {
 			anthropicSubscriptionWarningShown: false,
 			session: {
 				modelRegistry: {
+					isUsingSubscriptionAuth: vi.fn(),
 					authStorage: {
 						get: vi.fn(),
 					},
@@ -68,6 +88,7 @@ describe("InteractiveMode.maybeWarnAboutAnthropicSubscriptionAuth", () => {
 		});
 
 		expect(fakeThis.showWarning).not.toHaveBeenCalled();
+		expect(fakeThis.session.modelRegistry.isUsingSubscriptionAuth).not.toHaveBeenCalled();
 		expect(fakeThis.session.modelRegistry.getApiKeyForProvider).not.toHaveBeenCalled();
 	});
 });

@@ -872,6 +872,40 @@ describe("ModelRegistry", () => {
 		});
 	});
 
+	describe("subscription auth detection", () => {
+		test("treats Anthropic OAuth without a managed API key as subscription auth", () => {
+			authStorage.set("anthropic", {
+				type: "oauth",
+				refresh: "refresh-token",
+				access: "access-token",
+				expires: Date.now() + 60_000,
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.getAll().find((entry) => entry.provider === "anthropic");
+
+			expect(model).toBeDefined();
+			expect(registry.isUsingSubscriptionAuth(model!)).toBe(true);
+		});
+
+		test("treats Anthropic OAuth with a managed API key as non-subscription auth", () => {
+			authStorage.set("anthropic", {
+				type: "oauth",
+				refresh: "refresh-token",
+				access: "access-token",
+				expires: Date.now() + 60_000,
+				authMode: "console",
+				apiKey: "sk-ant-managed",
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.getAll().find((entry) => entry.provider === "anthropic");
+
+			expect(model).toBeDefined();
+			expect(registry.isUsingSubscriptionAuth(model!)).toBe(false);
+		});
+	});
+
 	describe("API key resolution", () => {
 		/** Create provider config with custom apiKey */
 		function providerWithApiKey(apiKey: string) {

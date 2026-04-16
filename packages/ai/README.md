@@ -1078,7 +1078,7 @@ const key = getEnvApiKey('openai');  // checks OPENAI_API_KEY
 
 Several providers require OAuth authentication instead of static API keys:
 
-- **Anthropic** (Claude Pro/Max subscription)
+- **Anthropic** (Claude Pro/Max subscription or Anthropic Console API billing)
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
 - **Google Gemini CLI** (Gemini 2.0/2.5 via Google Cloud Code Assist; free tier or paid subscription)

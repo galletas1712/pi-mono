@@ -73,6 +73,51 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
+	it("creates a managed API key for Anthropic Console login", async () => {
+		let authUrl = "";
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const url = getUrl(input);
+			if (url === "https://platform.claude.com/v1/oauth/token") {
+				const body = getJsonBody(init);
+				expect(body.grant_type).toBe("authorization_code");
+				expect(body.code).toBe("manual-code");
+				return jsonResponse({
+					access_token: "access-token",
+					refresh_token: "refresh-token",
+					expires_in: 3600,
+				});
+			}
+			if (url === "https://api.anthropic.com/api/oauth/claude_cli/create_api_key") {
+				expect(init?.method).toBe("POST");
+				return jsonResponse({ raw_key: "sk-ant-managed" });
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credentials = await loginAnthropic({
+			onAuth: (info) => {
+				authUrl = info.url;
+				expect(authUrl.startsWith("https://platform.claude.com/oauth/authorize?")).toBe(true);
+			},
+			onPrompt: async () => "2",
+			onManualCodeInput: async () => {
+				const url = new URL(authUrl);
+				const state = url.searchParams.get("state");
+				const redirectUri = url.searchParams.get("redirect_uri");
+				if (!state || !redirectUri) {
+					throw new Error("Missing OAuth state or redirect_uri in auth URL");
+				}
+				return `${redirectUri}?code=manual-code&state=${state}`;
+			},
+		});
+
+		expect(credentials.authMode).toBe("console");
+		expect(credentials.apiKey).toBe("sk-ant-managed");
+		expect(credentials.access).toBe("access-token");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
 	it("omits scope from refresh token requests", async () => {
 		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
 			expect(getUrl(input)).toBe("https://platform.claude.com/v1/oauth/token");
@@ -95,5 +140,35 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(credentials.access).toBe("new-access-token");
 		expect(credentials.refresh).toBe("new-refresh-token");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("recreates the managed API key when Anthropic Console credentials refresh", async () => {
+		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
+			const url = getUrl(input);
+			if (url === "https://platform.claude.com/v1/oauth/token") {
+				const body = getJsonBody(init);
+				expect(body.grant_type).toBe("refresh_token");
+				expect(body.refresh_token).toBe("refresh-token");
+				return jsonResponse({
+					access_token: "new-access-token",
+					refresh_token: "new-refresh-token",
+					expires_in: 3600,
+				});
+			}
+			if (url === "https://api.anthropic.com/api/oauth/claude_cli/create_api_key") {
+				expect(init?.method).toBe("POST");
+				return jsonResponse({ raw_key: "sk-ant-managed" });
+			}
+			throw new Error(`Unexpected fetch: ${url}`);
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credentials = await refreshAnthropicToken("refresh-token", { authMode: "console" });
+
+		expect(credentials.authMode).toBe("console");
+		expect(credentials.access).toBe("new-access-token");
+		expect(credentials.refresh).toBe("new-refresh-token");
+		expect(credentials.apiKey).toBe("sk-ant-managed");
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 });

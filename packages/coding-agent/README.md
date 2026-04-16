@@ -79,11 +79,11 @@ export ANTHROPIC_API_KEY=sk-ant-...
 pi
 ```
 
-Or use your existing subscription:
+Or use `/login` to choose Claude subscription or Anthropic Console billing:
 
 ```bash
 pi
-/login  # Then select provider
+/login  # Then select Anthropic and choose a login method
 ```
 
 Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
@@ -94,7 +94,7 @@ Then just talk to pi. By default, pi gives the model four tools: `read`, `write`
 
 ## Providers & Models
 
-For each built-in provider, pi maintains a list of tool-capable models, updated with every release. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
+For each built-in provider, pi maintains a list of tool-capable models, updated with every release. Authenticate via `/login` or API key, then select any model from that provider via `/model` (or Ctrl+L).
 
 **Subscriptions:**
 - Anthropic Claude Pro/Max
@@ -102,6 +102,9 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - GitHub Copilot
 - Google Gemini CLI
 - Google Antigravity
+
+**Anthropic Console:**
+- Anthropic Console account with API usage billing via `/login`
 
 **API keys:**
 - Anthropic

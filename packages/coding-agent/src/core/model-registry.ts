@@ -695,6 +695,21 @@ export class ModelRegistry {
 	}
 
 	/**
+	 * Check if a model is using subscription-style OAuth auth.
+	 * Anthropic Console login stores OAuth credentials too, but bills via API key usage.
+	 */
+	isUsingSubscriptionAuth(model: Model<Api>): boolean {
+		const cred = this.authStorage.get(model.provider);
+		if (cred?.type !== "oauth") {
+			return false;
+		}
+		if (model.provider === "anthropic" && cred.apiKey) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
 	 * Register a provider dynamically (from extensions).
 	 *
 	 * If provider has models: replaces all existing models for this provider.

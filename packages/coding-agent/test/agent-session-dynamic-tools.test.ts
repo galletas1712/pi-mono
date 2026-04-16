@@ -207,8 +207,16 @@ describe("AgentSession dynamic tool registration", () => {
 					parameters: Type.Object({
 						text: Type.String(),
 					}),
-					execute: async (_toolCallId, params) => ({
-						content: [{ type: "text", text: String(params.text) }],
+					execute: async (_toolCallId, params: unknown) => ({
+						content: [
+							{
+								type: "text",
+								text:
+									typeof params === "object" && params !== null && "text" in params
+										? String((params as { text: unknown }).text)
+										: "",
+							},
+						],
 						details: {},
 					}),
 				},
