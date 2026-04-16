@@ -208,7 +208,7 @@ describe("AgentSession dynamic tool registration", () => {
 						text: Type.String(),
 					}),
 					execute: async (_toolCallId, params) => ({
-						content: [{ type: "text", text: String(params.text) }],
+						content: [{ type: "text", text: String((params as { text: string }).text) }],
 						details: {},
 					}),
 				},

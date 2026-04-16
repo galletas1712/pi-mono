@@ -1,5 +1,5 @@
 /**
- * Anthropic OAuth flow (Claude Pro/Max)
+ * Anthropic OAuth flow (Claude subscription or Anthropic Console)
  *
  * NOTE: This module uses Node.js http.createServer for the OAuth callback server.
  * It is only intended for CLI use, not browser environments.
@@ -21,19 +21,29 @@ type NodeApis = {
 	createServer: typeof import("node:http").createServer;
 };
 
+type AnthropicAuthMode = "claudeai" | "console";
+type AnthropicCredentials = OAuthCredentials & {
+	authMode?: AnthropicAuthMode;
+	apiKey?: string;
+};
+
 let nodeApis: NodeApis | null = null;
 let nodeApisPromise: Promise<NodeApis> | null = null;
 
 const decode = (s: string) => atob(s);
 const CLIENT_ID = decode("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl");
-const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
+const CLAUDE_AI_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize";
+const CONSOLE_AUTHORIZE_URL = "https://platform.claude.com/oauth/authorize";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
+const API_KEY_URL = "https://api.anthropic.com/api/oauth/claude_cli/create_api_key";
 const CALLBACK_HOST = "127.0.0.1";
 const CALLBACK_PORT = 53692;
 const CALLBACK_PATH = "/callback";
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`;
 const SCOPES =
 	"org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+const CONSOLE_API_KEY_EXPIRES = Number.MAX_SAFE_INTEGER;
+
 async function getNodeApis(): Promise<NodeApis> {
 	if (nodeApis) return nodeApis;
 	if (!nodeApisPromise) {
@@ -93,6 +103,48 @@ function formatErrorDetails(error: unknown): string {
 		return details.join("; ");
 	}
 	return String(error);
+}
+
+function parseAnthropicAuthMode(input: string): AnthropicAuthMode | undefined {
+	const value = input.trim().toLowerCase();
+	if (
+		!value ||
+		value === "1" ||
+		value === "claude" ||
+		value === "claudeai" ||
+		value === "subscription" ||
+		value === "pro" ||
+		value === "max"
+	) {
+		return "claudeai";
+	}
+	if (
+		value === "2" ||
+		value === "console" ||
+		value === "anthropic console" ||
+		value === "api" ||
+		value === "api key" ||
+		value === "billing"
+	) {
+		return "console";
+	}
+	return undefined;
+}
+
+async function selectAnthropicAuthMode(onPrompt: (prompt: OAuthPrompt) => Promise<string>): Promise<AnthropicAuthMode> {
+	const input = await onPrompt({
+		message:
+			"Select Anthropic login type:\n1. Claude subscription (Pro, Max, Team, or Enterprise)\n2. Anthropic Console (API usage billing)\nEnter 1 or 2:",
+		placeholder: "1",
+		allowEmpty: true,
+	});
+
+	const authMode = parseAnthropicAuthMode(input);
+	if (!authMode) {
+		throw new Error("Invalid Anthropic login selection. Enter 1 for Claude subscription or 2 for Anthropic Console.");
+	}
+
+	return authMode;
 }
 
 async function startCallbackServer(expectedState: string): Promise<CallbackServerInfo> {
@@ -224,8 +276,42 @@ async function exchangeAuthorizationCode(
 	};
 }
 
+async function createConsoleApiKey(accessToken: string): Promise<string> {
+	const response = await fetch(API_KEY_URL, {
+		method: "POST",
+		headers: {
+			Accept: "application/json",
+			Authorization: `Bearer ${accessToken}`,
+		},
+		signal: AbortSignal.timeout(30_000),
+	});
+
+	const responseBody = await response.text();
+
+	if (!response.ok) {
+		throw new Error(
+			`Console API key request failed. status=${response.status}; url=${API_KEY_URL}; body=${responseBody}`,
+		);
+	}
+
+	let data: { raw_key?: string };
+	try {
+		data = JSON.parse(responseBody) as { raw_key?: string };
+	} catch (error) {
+		throw new Error(
+			`Console API key request returned invalid JSON. url=${API_KEY_URL}; body=${responseBody}; details=${formatErrorDetails(error)}`,
+		);
+	}
+
+	if (!data.raw_key) {
+		throw new Error(`Console API key request did not return raw_key. url=${API_KEY_URL}; body=${responseBody}`);
+	}
+
+	return data.raw_key;
+}
+
 /**
- * Login with Anthropic OAuth (authorization code + PKCE)
+ * Login with Anthropic OAuth (Claude subscription or Anthropic Console)
  */
 export async function loginAnthropic(options: {
 	onAuth: (info: { url: string; instructions?: string }) => void;
@@ -233,6 +319,7 @@ export async function loginAnthropic(options: {
 	onProgress?: (message: string) => void;
 	onManualCodeInput?: () => Promise<string>;
 }): Promise<OAuthCredentials> {
+	const authMode = await selectAnthropicAuthMode(options.onPrompt);
 	const { verifier, challenge } = await generatePKCE();
 	const server = await startCallbackServer(verifier);
 
@@ -253,7 +340,7 @@ export async function loginAnthropic(options: {
 		});
 
 		options.onAuth({
-			url: `${AUTHORIZE_URL}?${authParams.toString()}`,
+			url: `${authMode === "console" ? CONSOLE_AUTHORIZE_URL : CLAUDE_AI_AUTHORIZE_URL}?${authParams.toString()}`,
 			instructions:
 				"Complete login in your browser. If the browser is on another machine, paste the final redirect URL here.",
 		});
@@ -336,7 +423,21 @@ export async function loginAnthropic(options: {
 		}
 
 		options.onProgress?.("Exchanging authorization code for tokens...");
-		return exchangeAuthorizationCode(code, state, verifier, redirectUriForExchange);
+		const credentials = await exchangeAuthorizationCode(code, state, verifier, redirectUriForExchange);
+		if (authMode === "console") {
+			options.onProgress?.("Creating Anthropic Console API key...");
+			const apiKey = await createConsoleApiKey(credentials.access);
+			return {
+				...credentials,
+				authMode,
+				apiKey,
+				expires: CONSOLE_API_KEY_EXPIRES,
+			} satisfies AnthropicCredentials;
+		}
+		return {
+			...credentials,
+			authMode,
+		} satisfies AnthropicCredentials;
 	} finally {
 		server.server.close();
 	}
@@ -380,7 +481,7 @@ export async function refreshAnthropicToken(refreshToken: string): Promise<OAuth
 
 export const anthropicOAuthProvider: OAuthProviderInterface = {
 	id: "anthropic",
-	name: "Anthropic (Claude Pro/Max)",
+	name: "Anthropic (Claude subscription / Console)",
 	usesCallbackServer: true,
 
 	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
@@ -393,10 +494,21 @@ export const anthropicOAuthProvider: OAuthProviderInterface = {
 	},
 
 	async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-		return refreshAnthropicToken(credentials.refresh);
+		const refreshed = await refreshAnthropicToken(credentials.refresh);
+		const anthropicCredentials = credentials as AnthropicCredentials;
+		if (!anthropicCredentials.apiKey) {
+			return refreshed;
+		}
+		return {
+			...refreshed,
+			authMode: anthropicCredentials.authMode ?? "console",
+			apiKey: anthropicCredentials.apiKey,
+			expires: CONSOLE_API_KEY_EXPIRES,
+		} satisfies AnthropicCredentials;
 	},
 
 	getApiKey(credentials: OAuthCredentials): string {
-		return credentials.access;
+		const anthropicCredentials = credentials as AnthropicCredentials;
+		return anthropicCredentials.apiKey ?? credentials.access;
 	},
 };

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added an Anthropic Console billing option to `/login`, matching the Claude subscription flow while storing a managed Anthropic API key for runtime use.
+
 ## [0.67.5] - 2026-04-16
 
 ### Fixed
