@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.67.4] - 2026-04-16
+
+### Fixed
+
+- Fixed markdown strikethrough parsing to require strict double-tilde delimiters (`~~text~~`) with non-whitespace boundaries, preventing accidental strikethrough from loose tilde usage.
+
 ## [0.67.3] - 2026-04-15
 
 ### Fixed
