@@ -134,6 +134,24 @@ describe("AuthStorage", () => {
 			}
 		});
 
+		test("anthropic console oauth credentials prefer the managed api key", async () => {
+			writeAuthJson({
+				anthropic: {
+					type: "oauth",
+					refresh: "console-refresh-token",
+					access: "console-access-token",
+					expires: Number.MAX_SAFE_INTEGER,
+					apiKey: "sk-ant-managed-console-key",
+					authMode: "console",
+				},
+			});
+
+			authStorage = AuthStorage.create(authJsonPath);
+			const apiKey = await authStorage.getApiKey("anthropic");
+
+			expect(apiKey).toBe("sk-ant-managed-console-key");
+		});
+
 		test("apiKey as literal value is used directly when not an env var", async () => {
 			// Make sure this isn't an env var
 			delete process.env.literal_api_key_value;

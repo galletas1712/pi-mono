@@ -3,7 +3,7 @@
  *
  * This module handles login, token refresh, and credential storage
  * for OAuth-based providers:
- * - Anthropic (Claude Pro/Max)
+ * - Anthropic (Claude subscription or Anthropic Console)
  * - GitHub Copilot
  * - Google Cloud Code Assist (Gemini CLI)
  * - Antigravity (Gemini 3, Claude, GPT-OSS via Google Cloud)

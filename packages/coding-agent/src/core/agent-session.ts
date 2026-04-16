@@ -2323,9 +2323,7 @@ export class AgentSession {
 					]),
 				)
 			: this._baseToolDefinitionsFactory
-				? Object.fromEntries(
-						this._baseToolDefinitionsFactory().map((definition) => [definition.name, definition]),
-					)
+				? Object.fromEntries(this._baseToolDefinitionsFactory().map((definition) => [definition.name, definition]))
 				: createAllToolDefinitions(this._cwd, {
 						read: { autoResizeImages },
 						bash: { commandPrefix: shellCommandPrefix },

@@ -15,13 +15,13 @@ Pi supports subscription-based providers via OAuth and API key providers via env
 
 Use `/login` in interactive mode, then select a provider:
 
-- Claude Pro/Max
+- Anthropic Claude subscription or Anthropic Console billing
 - ChatGPT Plus/Pro (Codex)
 - GitHub Copilot
 - Google Gemini CLI
 - Google Antigravity
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired. Anthropic Console login stores a managed API key under the same `anthropic` entry after the OAuth flow completes.
 
 ### GitHub Copilot
 

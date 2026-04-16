@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Anthropic Console OAuth login support alongside the existing Claude subscription flow, creating and storing a managed Anthropic API key when Console billing is selected.
+
 ## [0.67.5] - 2026-04-16
 
 ### Fixed
